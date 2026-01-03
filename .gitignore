@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+python/venv/
+
+# Build output
+dist/
+
+# Logs
+logs/
+*.log
+
+# Training data (too large for git)
+data/self_play_games/*.npy
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PM2
+.pm2/

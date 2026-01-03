@@ -1,0 +1,4 @@
+# MLX Training Requirements for Luddo Neural Evaluator
+mlx>=0.0.10
+numpy>=1.24.0
+tqdm>=4.65.0

@@ -1,0 +1,26 @@
+{
+  "name": "luddo-ai-engine",
+  "version": "1.0.0",
+  "description": "Luddo AI Engine - MCTS with Neural Evaluation",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "echo \"No tests yet\""
+  },
+  "keywords": ["luddo", "ludo", "ai", "mcts", "game"],
+  "author": "Asif Rao",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

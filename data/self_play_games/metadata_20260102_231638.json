@@ -1,0 +1,16 @@
+{
+  "timestamp": "20260102_231638",
+  "num_games": 10000,
+  "num_players": 2,
+  "num_positions": 1381871,
+  "feature_dim": 64,
+  "game_results": {
+    "wins": {
+      "red": 5112,
+      "blue": 4888,
+      "yellow": 0,
+      "green": 0
+    },
+    "draws": 0
+  }
+}
