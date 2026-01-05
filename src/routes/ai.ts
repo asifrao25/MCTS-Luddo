@@ -9,17 +9,26 @@ import {
   AIMoveResponse,
   MoveDecision,
 } from '../types/types.js';
-import { createMCTSPlanner } from '../mcts/MCTSPlanner.js';
+import { createParallelMCTS } from '../mcts/ParallelMCTS.js';
 import { evaluateMoves } from '../evaluation/HeuristicEvaluator.js';
 import { DEFAULT_WEIGHTS } from '../types/types.js';
+import { evaluatePosition, isNeuralAvailable } from '../services/NeuralClient.js';
 
 const router = Router();
 
-// Create MCTS planner with 3 second time budget
-const mctsPlanner = createMCTSPlanner({
+// Track neural availability
+let neuralAvailable = false;
+isNeuralAvailable().then(available => {
+  neuralAvailable = available;
+  console.log(`[AI] Neural evaluator: ${available ? 'AVAILABLE' : 'NOT AVAILABLE'}`);
+});
+
+// Create Parallel MCTS planner with 8 threads for M4 Mac
+const mctsPlanner = createParallelMCTS({
   iterations: 50000,
-  timeBudget: 3000,  // 3 seconds max
+  timeBudget: 5500,  // 5.5 seconds for parallel search
   maxDepth: 50,
+  parallelThreads: 8,  // M4 has 10 cores, use 8 for MCTS
 });
 
 /**
@@ -49,6 +58,20 @@ router.post('/move', async (req: Request, res: Response) => {
       return res.status(400).json(response);
     }
 
+    // Ensure game state has all required fields for MCTS workers
+    if (!gameState.rankings) gameState.rankings = [];
+    if (gameState.winner === undefined) gameState.winner = null;
+
+    // Ensure all tokens have color property
+    for (const playerColor of Object.keys(gameState.players)) {
+      const player = gameState.players[playerColor as keyof typeof gameState.players];
+      if (player && player.tokens) {
+        for (const token of player.tokens) {
+          if (!token.color) token.color = playerColor as typeof token.color;
+        }
+      }
+    }
+
     // Fast path: only one valid move
     if (validMoves.length === 1) {
       const decision: MoveDecision = {
@@ -67,8 +90,11 @@ router.post('/move', async (req: Request, res: Response) => {
       return res.json(response);
     }
 
-    // Run MCTS search
-    const mctsResult = mctsPlanner.search(gameState, diceValue, validMoves);
+    // Run parallel MCTS search and neural evaluation concurrently
+    const [mctsResult, neuralScore] = await Promise.all([
+      mctsPlanner.search(gameState, diceValue, validMoves),
+      neuralAvailable ? evaluatePosition(gameState, gameState.currentTurn) : Promise.resolve(null),
+    ]);
 
     // Enhance reasoning with heuristic insights
     const heuristicDecision = evaluateMoves(
@@ -88,11 +114,19 @@ router.post('/move', async (req: Request, res: Response) => {
       combinedReasoning += ` | MCTS overrides heuristic (${heuristicDecision.reasoning})`;
     }
 
+    // Blend neural evaluation into confidence if available
+    let finalConfidence = mctsResult.confidence;
+    if (neuralScore !== null) {
+      // Blend: 70% MCTS + 30% Neural
+      finalConfidence = mctsResult.confidence * 0.7 + neuralScore * 0.3;
+      combinedReasoning += ` | Neural: ${(neuralScore * 100).toFixed(1)}%`;
+    }
+
     const decision: MoveDecision = {
       tokenId: mctsResult.bestMove,
       reasoning: combinedReasoning,
-      confidence: mctsResult.confidence,
-      model: `mcts-v1 (${mctsResult.iterations} iters)`,
+      confidence: finalConfidence,
+      model: `mcts-v2-parallel (${mctsResult.iterations} iters${neuralScore !== null ? ' +neural' : ''})`,
       evaluationTime: mctsResult.evaluationTime,
       iterations: mctsResult.iterations,
     };
@@ -120,10 +154,15 @@ router.post('/move', async (req: Request, res: Response) => {
  * GET /api/ai/health
  * Health check endpoint
  */
-router.get('/health', (_req: Request, res: Response) => {
+router.get('/health', async (_req: Request, res: Response) => {
+  // Check neural availability on each health check
+  const neuralStatus = await isNeuralAvailable();
+  neuralAvailable = neuralStatus;
+
   res.json({
     status: 'healthy',
-    model: 'mcts-v1',
+    model: 'mcts-v2-parallel',
+    neuralIntegrated: neuralStatus,
     config: mctsPlanner.getConfig(),
   });
 });

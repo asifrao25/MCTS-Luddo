@@ -87,7 +87,19 @@ def get_threat_level(token: Dict, player_color: str, state: Dict) -> float:
 
 
 def extract_features(state: Dict, for_player: str) -> List[float]:
-    """Extract 64 position features from game state"""
+    """
+    Extract 64 position features from game state.
+
+    Feature vector (64 dims = 16 tokens × 4 features):
+    For each token (4 per player × 4 players = 16 tokens):
+    - Normalized position (0-1): progress towards finishing
+    - Is at home/yard (0/1)
+    - Is finished (0/1)
+    - Distance to finish (normalized 0-1)
+
+    Players are rotated so perspective player is always first.
+    This matches the format used in feature_extractor.py for training.
+    """
     features = []
 
     # Order players starting from perspective player
@@ -102,24 +114,26 @@ def extract_features(state: Dict, for_player: str) -> List[float]:
     for color in player_order:
         player = state['players'][color]
         for token in player['tokens']:
-            # Feature 1: Progress
-            if token['position'] == 99:
-                progress = 1.0
-            elif token['stepCount'] >= 0:
-                progress = token['stepCount'] / 56.0
+            step = token.get('stepCount', -1)
+            pos = token.get('position', -1)
+
+            # Determine token state
+            is_home = (pos == -1)
+            is_finished = (pos == 99 or step >= 56)
+
+            if is_home:
+                # At home/yard: [0, 1, 0, 1]
+                features.extend([0.0, 1.0, 0.0, 1.0])
+            elif is_finished:
+                # Finished: [1, 0, 1, 0]
+                features.extend([1.0, 0.0, 1.0, 0.0])
             else:
-                progress = 0.0
-
-            # Feature 2: In yard
-            in_yard = 1.0 if token['position'] == -1 else 0.0
-
-            # Feature 3: In home stretch
-            in_home_stretch = 1.0 if 50 < token['stepCount'] < 56 else 0.0
-
-            # Feature 4: Threat level
-            threat = get_threat_level(token, color, state)
-
-            features.extend([progress, in_yard, in_home_stretch, threat])
+                # On board: calculate normalized position and distance
+                # Use 57.0 scale to match training data (Python game uses 0-57)
+                # TypeScript stepCount 0-56 maps to Python position 0-57
+                pos_normalized = max(0, step) / 57.0
+                distance_to_finish = max(0, 57 - step) / 57.0
+                features.extend([pos_normalized, 0.0, 0.0, distance_to_finish])
 
     return features
 
@@ -187,6 +201,60 @@ class NeuralHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(response).encode('utf-8'))
+        elif self.path == '/evaluate_features':
+            # Direct feature evaluation for MCTS
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+
+            try:
+                data = json.loads(post_data.decode('utf-8'))
+                features = data['features']  # 64-dim feature vector
+                if MODEL is None:
+                    score = 0.5
+                else:
+                    features_mx = mx.array([features], dtype=mx.float32)
+                    prediction = MODEL(features_mx)
+                    score = float(prediction[0, 0])
+
+                response = {'success': True, 'score': score}
+                self.send_response(200)
+
+            except Exception as e:
+                response = {'success': False, 'error': str(e)}
+                self.send_response(500)
+
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode('utf-8'))
+
+        elif self.path == '/batch_evaluate_features':
+            # Batch feature evaluation for MCTS
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+
+            try:
+                data = json.loads(post_data.decode('utf-8'))
+                feature_list = data['features']  # List of 64-dim feature vectors
+
+                scores = []
+                if MODEL is None:
+                    scores = [0.5] * len(feature_list)
+                else:
+                    features_mx = mx.array(feature_list, dtype=mx.float32)
+                    predictions = MODEL(features_mx)
+                    scores = [float(p[0]) for p in predictions]
+
+                response = {'success': True, 'scores': scores}
+                self.send_response(200)
+
+            except Exception as e:
+                response = {'success': False, 'error': str(e)}
+                self.send_response(500)
+
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode('utf-8'))
+
 
         else:
             self.send_response(404)
@@ -232,7 +300,7 @@ def main():
 
     # Start server
     port = 3021
-    server = HTTPServer(('localhost', port), NeuralHandler)
+    server = HTTPServer(('0.0.0.0', port), NeuralHandler)
 
     print(f"\n╔═══════════════════════════════════════════════╗")
     print(f"║     Neural Evaluator Server - Port {port}       ║")

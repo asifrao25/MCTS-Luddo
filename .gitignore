@@ -11,6 +11,15 @@ logs/
 
 # Training data (too large for git)
 data/self_play_games/*.npy
+data/sim_*/
+data/test_*/
+data/*.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.db
 
 # Environment
 .env
